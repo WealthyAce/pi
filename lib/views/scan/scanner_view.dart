@@ -213,19 +213,34 @@ class _ScannerViewState extends State<ScannerView> with SingleTickerProviderStat
   }
 
   // Real Gemini Analysis
+  // Real Gemini Analysis - FIXED VERSION
   Future<void> _runGeminiAnalysis(Uint8List imageBytes, String savedPath) async {
-    debugPrint("===== GEMINI START =====");
-    debugPrint("API KEY: ${_apiKey?.substring(0, 10)}...");
     try {
-      final model = GenerativeModel(
-        model: 'gemini-1.5-flash',
-        apiKey: 'AQ.Ab8RN6L265xsp_GUUb8egQoiKhC7ZVEk2ojnR_DZAQ3n3ARPGA',
+      // 1. Definisikan Schema agar Gemini mengembalikan tipe data yang konsisten
+      final dietSchema = Schema.object(
+        properties: {
+          'foodName': Schema.string(description: 'Name of the food identified.'),
+          'calories': Schema.integer(description: 'Total calories as a pure number.'),
+          'protein': Schema.string(description: 'Protein content, e.g., "10g".'),
+          'carbs': Schema.string(description: 'Carbohydrates content, e.g., "30g".'),
+          'fat': Schema.string(description: 'Fat content, e.g., "8g".'),
+          'description': Schema.string(description: 'Short dynamic description of the food and its health values.'),
+        },
+        requiredProperties: ['foodName', 'calories', 'protein', 'carbs', 'fat', 'description'],
       );
 
-      final prompt = 'Identify the food in this image. Return a JSON object with this exact structure: '
-          '{"foodName": "Name of Food", "calories": 250, "protein": "10g", "carbs": "30g", "fat": "8g", '
-          '"description": "Short description of the food and its health/nutritional values."}. '
-          'Do not include markdown tags like ```json or ```. Return pure JSON text only.';
+      final model = GenerativeModel(
+        model: 'gemini-1.5-flash',
+        apiKey: _apiKey!,
+        // 2. Paksa model untuk mengembalikan format JSON paten sesuai schema
+        generationConfig: GenerationConfig(
+          responseMimeType: 'application/json',
+          responseSchema: dietSchema,
+        ),
+      );
+
+      // Prompt disederhanakan karena strukturnya sudah diatur oleh schema di atas
+      final prompt = 'Identify the food in this image and provide its estimated nutritional facts accurately.';
 
       final response = await model.generateContent([
         Content.multi([
@@ -234,20 +249,18 @@ class _ScannerViewState extends State<ScannerView> with SingleTickerProviderStat
         ])
       ]);
 
-      debugPrint("===== GEMINI RAW RESPONSE =====");
-      debugPrint(response.text);
       final jsonText = response.text?.trim() ?? '';
-      
-      // Attempt to clean JSON formatting if Gemini included it anyway
-      String cleanJson = jsonText;
-      if (jsonText.startsWith('```')) {
-        cleanJson = jsonText.replaceAll(RegExp(r'^```json\s*|```$'), '');
-      }
+      debugPrint("===== GEMINI RAW RESPONSE =====");
+      debugPrint(jsonText); // Untuk memantau hasil di debug console
 
-      final parsed = jsonDecode(cleanJson);
+      if (jsonText.isEmpty) throw Exception('Gemini returned an empty response.');
+
+      // 3. Langsung decode tanpa perlu pakai Regex cleaner lagi
+      final parsed = jsonDecode(jsonText);
+      
       _showResultBottomSheet(
         foodName: parsed['foodName'] ?? 'Unknown Food',
-        calories: parsed['calories']?.toString() ?? '0',
+        calories: parsed['calories']?.toString() ?? '0', // Aman dari Int ke String
         protein: parsed['protein'] ?? '0g',
         carbs: parsed['carbs'] ?? '0g',
         fat: parsed['fat'] ?? '0g',
@@ -256,7 +269,9 @@ class _ScannerViewState extends State<ScannerView> with SingleTickerProviderStat
         isSimulated: false,
       );
     } catch (e) {
-      // If parsing or Gemini failed, fallback to simulation but warn user
+      debugPrint("===== GEMINI PARSING ERROR =====");
+      debugPrint(e.toString());
+      // Jika gagal, fallback ke simulation dan tampilkan detail error aslinya
       await _runSimulationAnalysis(savedPath, errorMessage: e.toString());
     }
   }
@@ -683,66 +698,69 @@ class _ScannerViewState extends State<ScannerView> with SingleTickerProviderStat
           ),
 
           // Shutter Button for Saving Food Photo
-          Positioned(
-            bottom: 90.0,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: _captureAndSavePhoto,
-                    child: Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withValues(alpha: 0.2),
-                        border: Border.all(color: Colors.white, width: 4.0),
-                      ),
-                      child: Container(
-                        margin: const EdgeInsets.all(4.0),
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(0xFF00C853),
-                        ),
-                        child: _isSavingPhoto
-                            ? const Padding(
-                                padding: EdgeInsets.all(12.0),
-                                child: CircularProgressIndicator(
-                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                  strokeWidth: 3.0,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.save_alt,
-                                color: Colors.white,
-                                size: 30.0,
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8.0),
-                  Text(
-                    'Save Photo to Project',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.8),
-                      fontSize: 12.0,
-                      fontWeight: FontWeight.w600,
-                      shadows: const [
-                        Shadow(
-                          offset: Offset(0, 1),
-                          blurRadius: 3.0,
-                          color: Colors.black45,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+          // CARI BAGIAN INI DI DALAM STACK:
+Positioned(
+  bottom: 90.0,
+  left: 0,
+  right: 0,
+  child: Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          // 1. UBAH DARI _captureAndSavePhoto MENJADI _scanFood
+          onTap: _scanFood, 
+          child: Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.2),
+              border: Border.all(color: Colors.white, width: 4.0),
+            ),
+            child: Container(
+              margin: const EdgeInsets.all(4.0),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xFF00C853),
               ),
+              // 2. SESUAIKAN KONDISI LOADING INDICATOR-NYA
+              child: _isScanning // <--- Ubah dari _isSavingPhoto ke _isScanning
+                  ? const Padding(
+                      padding: EdgeInsets.all(12.0),
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        strokeWidth: 3.0,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.center_focus_strong, // <--- Opsional: Ganti ikon biar lebih cocok buat scan
+                      color: Colors.white,
+                      size: 30.0,
+                    ),
             ),
           ),
+        ),
+        const SizedBox(height: 8.0),
+        Text(
+          'Scan Food with AI', // <--- Ganti teks label bawah tombol
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.8),
+            fontSize: 12.0,
+            fontWeight: FontWeight.w600,
+            shadows: const [
+              Shadow(
+                offset: Offset(0, 1),
+                blurRadius: 3.0,
+                color: Colors.black45,
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  ),
+),
 
           // 5. Active scanner loading animation overlay
           if (_isScanning)
